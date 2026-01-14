@@ -50,6 +50,7 @@ from torchrl.trainers.trainers import (
     RewardNormalizer,
     SelectKeys,
     UpdateWeights,
+    EarlyStoppingHook,  # added
 )
 
 _has_ale = importlib.util.find_spec("ale_py") is not None
@@ -1143,6 +1144,37 @@ class TestProcessLossHook:
         td_out = trainer._process_loss_hook(td_sub_batch, td_loss.clone())
         assert torch.allclose(td_out["loss_a"], torch.tensor(0.5))
 
+class TestEarlyStoppingHook:
+    def test_threshold_none(self):
+        hook = EarlyStoppingHook()
+        assert not hook(None, None)
+
+    def test_prefers_losses_over_batch(self):
+        losses = TensorDict({"loss": torch.tensor(0.5)}, [])
+        batch = TensorDict({"loss": torch.tensor(10.0)}, [])
+        hook = EarlyStoppingHook(key="loss", threshold=0.6, mode="min", patience=1)
+        assert hook(batch, losses)
+
+    def test_use_batch_if_no_losses(self):
+        batch = TensorDict({"metric": torch.tensor(2.0)}, [])
+        hook = EarlyStoppingHook(key="metric", threshold=1.5, mode="max", patience=1)
+        assert hook(batch, None)
+
+    def test_patience_behavior(self):
+        hook = EarlyStoppingHook(key="loss", threshold=0.5, mode="min", patience=2)
+        losses1 = TensorDict({"loss": torch.tensor(0.4)}, [])
+        losses2 = TensorDict({"loss": torch.tensor(0.4)}, [])
+        assert hook(None, losses1) is False  # first crossing, but patience not met
+        assert hook(None, losses2) is True  # second consecutive crossing -> stop
+
+    def test_state_dict_and_load(self):
+        hook = EarlyStoppingHook(key="loss", threshold=0.5, mode="min", patience=2)
+        hook(None, TensorDict({"loss": torch.tensor(0.4)}, []))
+        sd = hook.state_dict()
+        hook2 = EarlyStoppingHook(key="loss", threshold=0.5, mode="min", patience=2)
+        hook2.load_state_dict(sd)
+        assert hook2._counter == hook._counter
+        assert hook2._best == hook._best
 
 if __name__ == "__main__":
     args, unknown = argparse.ArgumentParser().parse_known_args()

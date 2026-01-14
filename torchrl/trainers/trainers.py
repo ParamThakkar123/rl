@@ -272,6 +272,9 @@ class Trainer:
         )  # Process batches for optimization (e.g., subsampling)
         self._post_optim_ops = []  # After optimization (e.g., weight syncing)
 
+        # Early stopping hooks: can inspect (batch, average_losses) and return True to stop
+        self._early_stop_ops = []
+
         self._modules = {}
 
         if self.optimizer is not None:
@@ -437,6 +440,7 @@ class Trainer:
             "post_epoch_log",
             "pre_epoch",
             "post_epoch",
+            "early_stop",
         ],
         op: Callable,
         **kwargs,
@@ -504,6 +508,13 @@ class Trainer:
                 op, input=TensorDictBase, output=tuple[str, float]
             )
             self._post_steps_log_ops.append((timed_op, kwargs))
+
+        # New: early_stop hook - receives (batch, average_losses) and returns bool
+        elif dest == "early_stop":
+            _check_input_output_typehint(
+                op, input=[TensorDictBase, TensorDictBase], output=bool
+            )
+            self._early_stop_ops.append((timed_op, kwargs))
 
         elif dest == "post_optim_log":
             _check_input_output_typehint(
@@ -719,8 +730,16 @@ class Trainer:
             # LOGGING POINT 1: Pre-optimization logging (e.g., rewards, frame counts)
             self._pre_steps_log_hook(batch)
 
+            # Run optimization steps and capture average_losses for the early-stopping hooks
+            average_losses = None
             if self.collected_frames >= self.collector.init_random_frames:
-                self.optim_steps(batch)
+                average_losses = self.optim_steps(batch)
+
+            # Early stopping check
+            if self._early_stop_hook(batch, average_losses):
+                self.save_trainer(force_save=True)
+                break
+
             self._post_steps_hook()
 
             # LOGGING POINT 2: Post-optimization logging (e.g., validation rewards, evaluation metrics)
@@ -763,7 +782,7 @@ class Trainer:
             torchrl_logger.info("shutting down collector")
         self.collector.shutdown()
 
-    def optim_steps(self, batch: TensorDictBase) -> None:
+    def optim_steps(self, batch: TensorDictBase) -> TensorDictBase | None:
         average_losses = None
 
         self._pre_optim_hook()
@@ -793,7 +812,7 @@ class Trainer:
                 self._post_loss_hook(sub_batch)
 
                 losses_td = self._process_loss_hook(sub_batch, losses_td)
-
+                # collect detached losses to average
                 losses_detached = self._optimizer_hook(losses_td)
                 self._post_optim_hook()
 
@@ -820,6 +839,8 @@ class Trainer:
                 optim_steps=self._optim_count,
                 **average_losses,
             )
+
+        return average_losses
 
     def _log(self, log_pbar=False, **kwargs) -> None:
         """Main logging method that handles both logger output and progress bar updates.
@@ -2110,3 +2131,70 @@ class UTDRHook(TrainerHookBase):
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Load state from dictionary."""
+
+
+class EarlyStoppingHook(TrainerHookBase):
+    """Early stopping hook.
+
+    Args:
+        key: metric key looked for in `losses` (preferred) or `batch`.
+        threshold: value threshold that triggers stopping when crossed.
+        mode: "max" or "min" - whether larger is better or smaller is better.
+        patience: how many consecutive calls the condition must hold before stopping.
+    """
+
+    def __init__(self, key: str = "loss", threshold: float | None = None, mode: str = "min", patience: int = 1):
+        self.key = key
+        self.threshold = threshold
+        self.mode = mode
+        self.patience = max(1, int(patience))
+        self._counter = 0
+        self._best = None
+
+    def __call__(self, batch: TensorDictBase | None, losses: TensorDictBase | None) -> bool:
+        if self.threshold is None:
+            return False
+        value = None
+        # Prefer losses
+        try:
+            if losses is not None and self.key in losses:
+                value = losses.get(self.key).item()
+        except Exception:
+            value = None
+        # Fallback to batch
+        if value is None and batch is not None:
+            try:
+                if self.key in batch:
+                    t = batch.get(self.key)
+                    value = t.mean().item() if hasattr(t, "mean") else float(t)
+            except Exception:
+                value = None
+        if value is None:
+            return False
+
+        if self._best is None:
+            self._best = value
+
+        improve = (value > self._best) if self.mode == "max" else (value < self._best)
+        if improve:
+            self._best = value
+
+        # Check condition (crossing threshold)
+        cond = (value >= self.threshold) if self.mode == "max" else (value <= self.threshold)
+        if cond:
+            self._counter += 1
+        else:
+            self._counter = 0
+
+        return self._counter >= self.patience
+
+    def register(self, trainer: Trainer, name: str = "early_stopping"):
+        trainer.register_module(name, self)
+        trainer.register_op("early_stop", self)
+
+    def state_dict(self) -> dict[str, Any]:
+        return {"_counter": self._counter, "_best": self._best}
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        self._counter = state_dict.get("_counter", 0)
+        self._best = state_dict.get("_best", None)
