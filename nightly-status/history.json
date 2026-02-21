@@ -1,24 +1,137 @@
 {
-  "last_updated": "2026-02-20T18:42:39.891939+00:00",
+  "last_updated": "2026-02-21T06:37:46.387241+00:00",
   "stats": {
     "last_7_days": {
       "days": 7,
       "runs_with_data": 7,
-      "total_workflow_runs": 88,
-      "total_success": 31,
-      "total_failure": 11,
-      "success_rate": 35.2
+      "total_workflow_runs": 87,
+      "total_success": 39,
+      "total_failure": 9,
+      "success_rate": 44.8
     },
     "last_30_days": {
-      "days": 9,
-      "runs_with_data": 8,
-      "total_workflow_runs": 101,
-      "total_success": 32,
+      "days": 10,
+      "runs_with_data": 9,
+      "total_workflow_runs": 113,
+      "total_success": 41,
       "total_failure": 14,
-      "success_rate": 31.7
+      "success_rate": 36.3
     }
   },
   "history": [
+    {
+      "date": "2026-02-21",
+      "orchestrator_ran": true,
+      "orchestrator_status": "pending",
+      "orchestrator_url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799",
+      "orchestrator_run_id": 22252095799,
+      "workflows": {
+        "test-linux.yml": {
+          "status": "success",
+          "conclusion": "success",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377413089",
+          "display_name": "Linux Tests"
+        },
+        "test-linux-llm.yml": {
+          "status": "skipped",
+          "conclusion": "skipped",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412962",
+          "display_name": "LLM Tests"
+        },
+        "test-linux-habitat.yml": {
+          "status": "skipped",
+          "conclusion": "skipped",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412988",
+          "display_name": "Habitat Tests"
+        },
+        "test-linux-tutorials.yml": {
+          "status": "success",
+          "conclusion": "success",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412923",
+          "display_name": "Tutorials Tests"
+        },
+        "test-linux-sota.yml": {
+          "status": "success",
+          "conclusion": "success",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412920",
+          "display_name": "SOTA Tests"
+        },
+        "test-linux-libs.yml": {
+          "status": "skipped",
+          "conclusion": "skipped",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377413014",
+          "display_name": "Libs Tests"
+        },
+        "test-windows-optdepts.yml": {
+          "status": "success",
+          "conclusion": "success",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412927",
+          "display_name": "Windows Tests"
+        },
+        "lint.yml": {
+          "status": "success",
+          "conclusion": "success",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412934",
+          "display_name": "Lint"
+        },
+        "docs.yml": {
+          "status": "success",
+          "conclusion": "success",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412930",
+          "display_name": "Documentation"
+        },
+        "benchmarks.yml": {
+          "status": "success",
+          "conclusion": "success",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412924",
+          "display_name": "Benchmarks"
+        },
+        "validate-test-partitioning.yml": {
+          "status": "success",
+          "conclusion": "success",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412926",
+          "display_name": "Test Partitioning"
+        },
+        "nightly_build.yml": {
+          "status": "skipped",
+          "conclusion": "skipped",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412971",
+          "display_name": "Nightly Build"
+        },
+        "build-wheels-linux.yml": {
+          "status": "cancelled",
+          "conclusion": "cancelled",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412952",
+          "display_name": "Wheels (Linux)"
+        },
+        "build-wheels-m1.yml": {
+          "status": "cancelled",
+          "conclusion": "cancelled",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412944",
+          "display_name": "Wheels (M1)"
+        },
+        "build-wheels-windows.yml": {
+          "status": "success",
+          "conclusion": "success",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412954",
+          "display_name": "Wheels (Windows)"
+        },
+        "build-wheels-aarch64-linux.yml": {
+          "status": "cancelled",
+          "conclusion": "cancelled",
+          "url": "https://github.com/ParamThakkar123/rl/actions/runs/22252095799/job/64377412946",
+          "display_name": "Wheels (Aarch64)"
+        }
+      },
+      "summary": {
+        "total": 16,
+        "success": 9,
+        "failure": 0,
+        "skipped": 4,
+        "other": 3,
+        "success_rate": 75.0
+      }
+    },
     {
       "date": "2026-02-20",
       "orchestrator_ran": true,
