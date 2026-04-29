@@ -8,6 +8,7 @@ import argparse
 import contextlib
 import functools
 import gc
+import os
 import subprocess
 import sys
 import time
@@ -53,6 +54,7 @@ from torchrl.collectors import (
 )
 from torchrl.collectors._constants import _Interruptor
 from torchrl.collectors._multi_base import MultiCollector
+from torchrl.collectors.distributed.ray import _has_ray, RayCollector
 
 from torchrl.collectors.utils import (
     _make_policy_factory,
@@ -337,9 +339,7 @@ class TestMakePolicyFactory:
                     expected_value = float(worker_idx)
                     assert torch.allclose(
                         worker_actions, torch.full_like(worker_actions, expected_value)
-                    ), (
-                        f"Worker {worker_idx} actions should be {expected_value}, got {worker_actions}"
-                    )
+                    ), f"Worker {worker_idx} actions should be {expected_value}, got {worker_actions}"
                 break
         finally:
             collector.shutdown()
@@ -407,17 +407,17 @@ class TestMakePolicyFactory:
             actions = data["action"]
 
             # Worker 0 should now output 10
-            assert torch.allclose(actions[0], torch.full_like(actions[0], 10.0)), (
-                f"After update: Worker 0 actions should be 10.0, got {actions[0]}"
-            )
+            assert torch.allclose(
+                actions[0], torch.full_like(actions[0], 10.0)
+            ), f"After update: Worker 0 actions should be 10.0, got {actions[0]}"
 
             # Workers 1 and 2 should still output their original values
-            assert torch.allclose(actions[1], torch.full_like(actions[1], 1.0)), (
-                "After update: Worker 1 actions should still be 1.0"
-            )
-            assert torch.allclose(actions[2], torch.full_like(actions[2], 2.0)), (
-                "After update: Worker 2 actions should still be 2.0"
-            )
+            assert torch.allclose(
+                actions[1], torch.full_like(actions[1], 1.0)
+            ), "After update: Worker 1 actions should still be 1.0"
+            assert torch.allclose(
+                actions[2], torch.full_like(actions[2], 2.0)
+            ), "After update: Worker 2 actions should still be 2.0"
 
         finally:
             collector.shutdown()
@@ -490,15 +490,15 @@ class TestMakePolicyFactory:
             data = next(data_iter)
             actions = data["action"]
 
-            assert torch.allclose(actions[0], torch.full_like(actions[0], 100.0)), (
-                "Worker 0 should output 100.0"
-            )
-            assert torch.allclose(actions[1], torch.full_like(actions[1], 200.0)), (
-                "Worker 1 should output 200.0"
-            )
-            assert torch.allclose(actions[2], torch.full_like(actions[2], 300.0)), (
-                "Worker 2 should output 300.0"
-            )
+            assert torch.allclose(
+                actions[0], torch.full_like(actions[0], 100.0)
+            ), "Worker 0 should output 100.0"
+            assert torch.allclose(
+                actions[1], torch.full_like(actions[1], 200.0)
+            ), "Worker 1 should output 200.0"
+            assert torch.allclose(
+                actions[2], torch.full_like(actions[2], 300.0)
+            ), "Worker 2 should output 300.0"
 
         finally:
             collector.shutdown()
@@ -715,9 +715,9 @@ class TestCollectorGeneric:
         try:
             with pytest.raises(AssertionError):
                 assert_allclose_td(b1, b2)
-            assert rollout1a.batch_size == b1.batch_size, (
-                f"got batch_size {rollout1a.batch_size} and {b1.batch_size}"
-            )
+            assert (
+                rollout1a.batch_size == b1.batch_size
+            ), f"got batch_size {rollout1a.batch_size} and {b1.batch_size}"
             assert_allclose_td(rollout1a, b1.select(*rollout1a.keys(True, True)))
         finally:
             collector.shutdown()
@@ -1254,9 +1254,9 @@ if __name__ == "__main__":
             ["python", "-c", script], capture_output=True, text=True
         )
         # This errors if the timeout is too short (3), succeeds if long enough (10)
-        assert result.returncode == int(to == 3), (
-            f"Test failed with output: {result.stdout}"
-        )
+        assert result.returncode == int(
+            to == 3
+        ), f"Test failed with output: {result.stdout}"
 
     @pytest.mark.parametrize(
         "collector_class",
@@ -2225,9 +2225,9 @@ if __name__ == "__main__":
                         f"Env {env_idx} should only produce observations with value {expected_id}, "
                         f"but got {actual_ids.tolist()}"
                     )
-                    assert actual_ids[0].item() == expected_id, (
-                        f"Environment {env_idx} should produce observation {expected_id}, but got {actual_ids[0].item()}"
-                    )
+                    assert (
+                        actual_ids[0].item() == expected_id
+                    ), f"Environment {env_idx} should produce observation {expected_id}, but got {actual_ids[0].item()}"
         finally:
             collector.shutdown()
 
@@ -2349,16 +2349,16 @@ if __name__ == "__main__":
         try:
             for i, data in enumerate(collector):
                 # Verify the data has the expected shape
-                assert data.shape == torch.Size([30]), (
-                    f"Batch {i}: expected shape [30], got {data.shape}"
-                )
+                assert data.shape == torch.Size(
+                    [30]
+                ), f"Batch {i}: expected shape [30], got {data.shape}"
 
                 # Verify traj_ids exists and has consistent shape
                 traj_ids = data.get(("collector", "traj_ids"))
                 assert traj_ids is not None, "traj_ids should be present"
-                assert traj_ids.shape == torch.Size([30]), (
-                    f"Batch {i}: traj_ids expected shape [30], got {traj_ids.shape}"
-                )
+                assert traj_ids.shape == torch.Size(
+                    [30]
+                ), f"Batch {i}: traj_ids expected shape [30], got {traj_ids.shape}"
 
                 # Verify traj_ids values are valid (non-negative integers)
                 assert (traj_ids >= 0).all(), "traj_ids should be non-negative"
@@ -2420,7 +2420,8 @@ class TestCollectorDevices:
                     device=None,
                 )
 
-        def _set_seed(self, seed: int | None = None) -> None: ...
+        def _set_seed(self, seed: int | None = None) -> None:
+            ...
 
     class EnvWithDevice(EnvBase):
         def __init__(self, default_device):
@@ -2476,7 +2477,8 @@ class TestCollectorDevices:
                     device=self.default_device,
                 )
 
-        def _set_seed(self, seed: int | None = None) -> None: ...
+        def _set_seed(self, seed: int | None = None) -> None:
+            ...
 
     class DeviceLessPolicy(TensorDictModuleBase):
         in_keys = ["observation"]
@@ -2650,7 +2652,8 @@ class TestCollectorDevices:
         def _reset(self, tensordict: TensorDictBase, **kwargs) -> TensorDictBase:
             return self.full_done_specs.zeros().update(self.observation_spec.zeros())
 
-        def _set_seed(self, seed: int | None) -> None: ...
+        def _set_seed(self, seed: int | None) -> None:
+            ...
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="no cuda device")
@@ -3181,9 +3184,9 @@ class TestPreemptiveThreshold:
             # Each row is one trajectory; all elements in a row share the same traj_id
             # Check that each trajectory has a unique id
             traj_ids_per_traj = traj_ids.select(-1, 0)
-            assert traj_ids_per_traj.unique().numel() == traj_ids_per_traj.numel(), (
-                "traj_ids should be unique across trajectories"
-            )
+            assert (
+                traj_ids_per_traj.unique().numel() == traj_ids_per_traj.numel()
+            ), "traj_ids should be unique across trajectories"
         finally:
             collector.shutdown()
             del collector
@@ -3526,7 +3529,8 @@ class TestUpdateParams:
                 {"state": self.state.clone()}, self.batch_size, device=self.device
             )
 
-        def _set_seed(self, seed: int | None) -> None: ...
+        def _set_seed(self, seed: int | None) -> None:
+            ...
 
     class Policy(TensorDictModuleBase):
         def __init__(self):
@@ -3741,9 +3745,9 @@ class TestUpdateParams:
                 p.data += torch.randn_like(p)
 
             new_weight = policy.module.weight.data.clone()
-            assert not torch.allclose(old_weight, new_weight), (
-                "Weights should have changed"
-            )
+            assert not torch.allclose(
+                old_weight, new_weight
+            ), "Weights should have changed"
 
             # Update weights - this should propagate to all workers via their dedicated queues
             collector.update_policy_weights_()
@@ -3759,9 +3763,9 @@ class TestUpdateParams:
             # Verify all workers have the new weights, including both workers on cuda:2
             for worker_idx in range(3):
                 worker_key = f"worker{worker_idx}"
-                assert "policy_state_dict" in state_dict[worker_key], (
-                    f"Worker {worker_idx} should have policy_state_dict"
-                )
+                assert (
+                    "policy_state_dict" in state_dict[worker_key]
+                ), f"Worker {worker_idx} should have policy_state_dict"
                 worker_weight = state_dict[worker_key]["policy_state_dict"][
                     "module.weight"
                 ]
@@ -4045,9 +4049,9 @@ def _test_num_threads_impl():
             frames_per_batch=200,
             cat_results="stack",
         )
-        assert torch.get_num_threads() == 7, (
-            f"Expected 7 threads, got {torch.get_num_threads()}"
-        )
+        assert (
+            torch.get_num_threads() == 7
+        ), f"Expected 7 threads, got {torch.get_num_threads()}"
         for _ in c:
             pass
     finally:
@@ -4081,9 +4085,9 @@ def _test_auto_num_threads_impl():
             break
         collector.shutdown()
         current = torch.get_num_threads()
-        assert current == init_threads, (
-            f"After shutdown: expected {init_threads} threads, got {current}"
-        )
+        assert (
+            current == init_threads
+        ), f"After shutdown: expected {init_threads} threads, got {current}"
         del collector
         gc.collect()
     finally:
@@ -4104,9 +4108,9 @@ def _test_auto_num_threads_impl():
             break
         collector.shutdown()
         current = torch.get_num_threads()
-        assert current == init_threads, (
-            f"After shutdown: expected {init_threads} threads, got {current}"
-        )
+        assert (
+            current == init_threads
+        ), f"After shutdown: expected {init_threads} threads, got {current}"
         del collector
         gc.collect()
     finally:
@@ -4226,9 +4230,9 @@ class TestDynamicEnvs:
 class TestCollectorsNonTensor:
     class AddNontTensorData(Transform):
         def _call(self, next_tensordict: TensorDictBase) -> TensorDictBase:
-            next_tensordict["nt"] = (
-                f"a string! - {next_tensordict.get('step_count').item()}"
-            )
+            next_tensordict[
+                "nt"
+            ] = f"a string! - {next_tensordict.get('step_count').item()}"
             return next_tensordict
 
         def _reset(
@@ -4329,8 +4333,7 @@ class TestCollectorsNonTensor:
             del collector
 
 
-class TestPostCollectHook:
-    @pytest.mark.skipif(not _has_gym, reason="requires gym.")
+class TestCollectHooks:
     def test_post_collect_hook_called(self):
         call_count = 0
 
@@ -4338,189 +4341,276 @@ class TestPostCollectHook:
             nonlocal call_count
             call_count += 1
 
-        env = SerialEnv(2, lambda cp=CARTPOLE_VERSIONED(): GymEnv(cp))
-        env.set_seed(0)
         collector = Collector(
-            env,
-            RandomPolicy(env.action_spec),
+            ContinuousActionVecMockEnv,
+            RandomPolicy(ContinuousActionVecMockEnv().action_spec),
             frames_per_batch=16,
             total_frames=64,
             post_collect_hook=hook,
         )
         try:
-            torch.manual_seed(0)
             batches = list(collector)
             assert len(batches) > 0, "collector should yield batches"
-            assert call_count == len(batches), (
-                f"hook was called {call_count} times, expected {len(batches)}"
-            )
+            assert call_count == len(
+                batches
+            ), f"hook was called {call_count} times, expected {len(batches)}"
         finally:
             collector.shutdown()
-            env.close(raise_if_closed=False)
 
-    @pytest.mark.skipif(not _has_gym, reason="requires gym.")
-    def test_post_collect_hook_receives_batch(self):
+    def test_post_collect_hook_receives_yielded_batch(self):
         received_batches = []
 
-        def hook(result):
-            received_batches.append(result.clone())
+        def postproc(result):
+            result = result.clone()
+            result.set("hook_marker", torch.ones(result.batch_size, dtype=torch.bool))
+            return result
 
-        env = SerialEnv(2, lambda cp=CARTPOLE_VERSIONED(): GymEnv(cp))
-        env.set_seed(0)
+        def hook(result):
+            assert "hook_marker" in result.keys()
+            received_batches.append(result)
+
         collector = Collector(
-            env,
-            RandomPolicy(env.action_spec),
+            ContinuousActionVecMockEnv,
+            RandomPolicy(ContinuousActionVecMockEnv().action_spec),
             frames_per_batch=16,
             total_frames=64,
+            postproc=postproc,
             post_collect_hook=hook,
         )
         try:
-            torch.manual_seed(0)
             batches = list(collector)
             assert len(batches) > 0
             assert len(received_batches) == len(batches)
             for batch, received in zip(batches, received_batches):
-                assert batch.shape == received.shape
-                assert_allclose_td(batch, received)
+                assert batch is received
         finally:
             collector.shutdown()
-            env.close(raise_if_closed=False)
 
-    @pytest.mark.skipif(not _has_gym, reason="requires gym.")
     def test_post_collect_hook_for_metrics(self):
-        total_reward = 0.0
+        total_frames = 0
 
         def compute_metrics(result):
-            nonlocal total_reward
-            rewards = result["next", "reward"]
-            if rewards is not None:
-                total_reward += rewards.sum().item()
+            nonlocal total_frames
+            total_frames += result.numel()
 
-        env = SerialEnv(2, lambda cp=CARTPOLE_VERSIONED(): GymEnv(cp))
-        env.set_seed(0)
         collector = Collector(
-            env,
-            RandomPolicy(env.action_spec),
+            ContinuousActionVecMockEnv,
+            RandomPolicy(ContinuousActionVecMockEnv().action_spec),
             frames_per_batch=16,
             total_frames=64,
             post_collect_hook=compute_metrics,
         )
         try:
-            torch.manual_seed(0)
             list(collector)
-            assert total_reward > 0, "should have accumulated positive reward"
+            assert total_frames == 64
         finally:
             collector.shutdown()
-            env.close(raise_if_closed=False)
 
-    @pytest.mark.skipif(not _has_gym, reason="requires gym.")
-    def test_post_collect_hook_none_by_default(self):
-        env = SerialEnv(2, lambda cp=CARTPOLE_VERSIONED(): GymEnv(cp))
-        env.set_seed(0)
+    def test_hooks_none_by_default(self):
         collector = Collector(
-            env,
-            RandomPolicy(env.action_spec),
+            ContinuousActionVecMockEnv,
+            RandomPolicy(ContinuousActionVecMockEnv().action_spec),
             frames_per_batch=16,
             total_frames=64,
         )
         try:
+            assert collector.pre_collect_hook is None
             assert collector.post_collect_hook is None
-            torch.manual_seed(0)
             list(collector)
         finally:
             collector.shutdown()
-            env.close(raise_if_closed=False)
 
-    @pytest.mark.skipif(not _has_gym, reason="requires gym.")
-    def test_post_collect_hook_setter(self):
+    def test_pre_collect_hook_called_from_constructor(self):
         call_count = 0
 
-        def hook(result):
+        def hook():
             nonlocal call_count
             call_count += 1
 
-        env = SerialEnv(2, lambda cp=CARTPOLE_VERSIONED(): GymEnv(cp))
-        env.set_seed(0)
         collector = Collector(
-            env,
-            RandomPolicy(env.action_spec),
+            ContinuousActionVecMockEnv,
+            RandomPolicy(ContinuousActionVecMockEnv().action_spec),
             frames_per_batch=16,
             total_frames=64,
+            pre_collect_hook=hook,
         )
-        assert collector.post_collect_hook is None
-
-        collector.post_collect_hook = hook
-        assert collector.post_collect_hook is hook
-
         try:
-            torch.manual_seed(0)
             batches = list(collector)
             assert call_count == len(batches)
         finally:
             collector.shutdown()
-            env.close(raise_if_closed=False)
 
-    @pytest.mark.skip(
-        reason=(
-            "MultiSyncCollector spawns workers where the hook runs per-worker, "
-            "not on the combined result. This is a known limitation."
-        )
-    )
-    @pytest.mark.skipif(not _has_gym, reason="requires gym.")
-    def test_post_collect_hook_multisync(self):
-        call_count = 0
+    def test_hook_setters(self):
+        pre_count = 0
+        post_count = 0
 
-        def hook(result):
-            nonlocal call_count
-            call_count += 1
+        def pre_hook():
+            nonlocal pre_count
+            pre_count += 1
 
-        env_fn = lambda cp=CARTPOLE_VERSIONED(): GymEnv(cp)
+        def post_hook(result):
+            nonlocal post_count
+            post_count += 1
 
-        collector = MultiSyncCollector(
-            [env_fn, env_fn],
+        collector = Collector(
+            ContinuousActionVecMockEnv,
+            RandomPolicy(ContinuousActionVecMockEnv().action_spec),
             frames_per_batch=16,
             total_frames=64,
-            post_collect_hook=hook,
         )
+        assert collector.pre_collect_hook is None
+        assert collector.post_collect_hook is None
+
+        collector.pre_collect_hook = pre_hook
+        collector.post_collect_hook = post_hook
+        assert collector.pre_collect_hook is pre_hook
+        assert collector.post_collect_hook is post_hook
+
         try:
-            torch.manual_seed(0)
             batches = list(collector)
-            assert len(batches) > 0
-            assert call_count == len(batches), (
-                f"hook called {call_count} times, expected {len(batches)}"
-            )
+            assert pre_count == len(batches)
+            assert post_count == len(batches)
         finally:
             collector.shutdown()
 
-    @pytest.mark.skip(
-        reason=(
-            "MultiAsyncCollector spawns workers where the hook runs per-worker, "
-            "not on the combined result. This is a known limitation."
-        )
-    )
-    @pytest.mark.skipif(not _has_gym, reason="requires gym.")
-    def test_post_collect_hook_multiasync(self):
-        call_count = 0
-
+    def test_hook_exception_propagates(self):
         def hook(result):
-            nonlocal call_count
-            call_count += 1
+            raise RuntimeError("hook failed")
 
-        env_fn = lambda cp=CARTPOLE_VERSIONED(): GymEnv(cp)
-
-        collector = MultiAsyncCollector(
-            [env_fn, env_fn],
+        collector = Collector(
+            ContinuousActionVecMockEnv,
+            RandomPolicy(ContinuousActionVecMockEnv().action_spec),
             frames_per_batch=16,
             total_frames=64,
             post_collect_hook=hook,
         )
         try:
-            torch.manual_seed(0)
-            batches = list(collector)
-            assert len(batches) > 0
-            assert call_count == len(batches), (
-                f"hook called {call_count} times, expected {len(batches)}"
-            )
+            with pytest.raises(RuntimeError, match="hook failed"):
+                list(collector)
+        finally:
+            collector.shutdown()
+
+    @pytest.mark.parametrize("collector_cls", [MultiSyncCollector, MultiAsyncCollector])
+    def test_hooks_run_in_multiprocess_workers(self, collector_cls):
+        manager = torch.multiprocessing.Manager()
+        hook_calls = manager.list()
+
+        def pre_hook():
+            hook_calls.append(("pre", os.getpid()))
+
+        def post_hook(result):
+            hook_calls.append(("post", os.getpid(), result.numel()))
+
+        collector = collector_cls(
+            [ContinuousActionVecMockEnv, ContinuousActionVecMockEnv],
+            policy=RandomPolicy(ContinuousActionVecMockEnv().action_spec),
+            frames_per_batch=16,
+            total_frames=128,
+            pre_collect_hook=pre_hook,
+            post_collect_hook=post_hook,
+        )
+        try:
+            list(collector)
+            pids = {entry[1] for entry in hook_calls}
+            assert pids
+            assert os.getpid() not in pids
+            assert len(pids) == 2
+            assert {entry[0] for entry in hook_calls} == {"pre", "post"}
+        finally:
+            collector.shutdown()
+            manager.shutdown()
+
+    def test_multiprocess_hook_setters_update_workers(self):
+        manager = torch.multiprocessing.Manager()
+        hook_calls = manager.list()
+        collector = MultiSyncCollector(
+            [ContinuousActionVecMockEnv, ContinuousActionVecMockEnv],
+            policy=RandomPolicy(ContinuousActionVecMockEnv().action_spec),
+            frames_per_batch=16,
+            total_frames=64,
+        )
+
+        def pre_hook():
+            hook_calls.append(("pre", os.getpid()))
+
+        def post_hook(result):
+            hook_calls.append(("post", os.getpid()))
+
+        try:
+            collector.pre_collect_hook = pre_hook
+            collector.post_collect_hook = post_hook
+            list(collector)
+            pids = {entry[1] for entry in hook_calls}
+            assert os.getpid() not in pids
+            assert len(pids) == 2
+            assert {entry[0] for entry in hook_calls} == {"pre", "post"}
+        finally:
+            collector.shutdown()
+            manager.shutdown()
+
+
+class TestCollectorRemoteHelpers:
+    def test_local_map_fn_and_get_distant_attr(self):
+        collector = Collector(
+            ContinuousActionVecMockEnv,
+            RandomPolicy(ContinuousActionVecMockEnv().action_spec),
+            frames_per_batch=16,
+            total_frames=16,
+            worker_idx=5,
+        )
+        try:
+            assert collector.get_distant_attr("worker_idx") == 5
+            assert collector.map_fn(
+                "get_distant_attr",
+                list_of_args=[("worker_idx",), ("frames_per_batch",)],
+            ) == [5, 16]
+            with pytest.raises(ValueError, match="same length"):
+                collector.map_fn(
+                    "get_distant_attr",
+                    list_of_args=[("worker_idx",)],
+                    list_of_kwargs=[{}, {}],
+                )
+        finally:
+            collector.shutdown()
+
+    @pytest.mark.parametrize("collector_cls", [MultiSyncCollector, MultiAsyncCollector])
+    def test_multiprocess_map_fn_and_get_distant_attr(self, collector_cls):
+        collector = collector_cls(
+            [ContinuousActionVecMockEnv, ContinuousActionVecMockEnv],
+            policy=RandomPolicy(ContinuousActionVecMockEnv().action_spec),
+            frames_per_batch=16,
+            total_frames=32,
+        )
+        try:
+            assert collector.get_distant_attr("worker_idx") == [0, 1]
+            assert collector.map_fn(
+                "get_distant_attr",
+                list_of_args=[("worker_idx",), ("worker_idx",)],
+            ) == [0, 1]
+            with pytest.raises(ValueError, match="Expected 2 argument entries"):
+                collector.map_fn("get_distant_attr", list_of_args=[("worker_idx",)])
+        finally:
+            collector.shutdown()
+
+    @pytest.mark.skipif(not _has_ray, reason="requires ray.")
+    def test_ray_map_fn_and_get_distant_attr(self):
+        collector = RayCollector(
+            [ContinuousActionVecMockEnv, ContinuousActionVecMockEnv],
+            policy=RandomPolicy(ContinuousActionVecMockEnv().action_spec),
+            frames_per_batch=16,
+            total_frames=32,
+            num_collectors=2,
+            ray_init_config={"num_cpus": 2, "include_dashboard": False},
+            remote_configs={"num_cpus": 1, "num_gpus": 0},
+        )
+        try:
+            assert collector.get_distant_attr("worker_idx") == [0, 1]
+            assert collector.map_fn(
+                "get_distant_attr",
+                list_of_args=[("worker_idx",), ("worker_idx",)],
+            ) == [0, 1]
+            with pytest.raises(ValueError, match="Expected 2 argument entries"):
+                collector.map_fn("get_distant_attr", list_of_args=[("worker_idx",)])
         finally:
             collector.shutdown()
 
@@ -4735,9 +4825,9 @@ class TestCollectorRB:
             for step_count, ids in zip(steps_counts, collector_ids):
                 step_countdiff = step_count.diff()
                 idsdiff = ids.diff()
-                assert ((step_countdiff == 1) | (step_countdiff < 0)).all(), (
-                    steps_counts
-                )
+                assert (
+                    (step_countdiff == 1) | (step_countdiff < 0)
+                ).all(), steps_counts
                 assert (idsdiff >= 0).all()
 
     @pytest.mark.skipif(not _has_gym, reason="requires gym.")
@@ -4786,9 +4876,9 @@ class TestCollectorRB:
             for step_count, ids in zip(steps_counts, collector_ids):
                 step_countdiff = step_count.diff()
                 idsdiff = ids.diff()
-                assert ((step_countdiff == 1) | (step_countdiff < 0)).all(), (
-                    steps_counts
-                )
+                assert (
+                    (step_countdiff == 1) | (step_countdiff < 0)
+                ).all(), steps_counts
                 assert (idsdiff >= 0).all()
 
     @pytest.mark.skipif(not _has_gym, reason="requires gym.")
@@ -5239,9 +5329,9 @@ class TestPolicyFactory:
 
             # Collect one batch – actions should be non-zero
             batch0 = next(iterator)
-            assert (batch0["action"] != 0).any(), (
-                "initial policy should produce non-zero actions"
-            )
+            assert (
+                batch0["action"] != 0
+            ).any(), "initial policy should produce non-zero actions"
 
             # Zero the main-node weights and push to workers
             with torch.no_grad():
@@ -5477,9 +5567,9 @@ class TestInitRandomFramesWithStart:
                 )
 
             # Verify that collection proceeded beyond init_random_frames
-            assert rb.write_count >= total_to_collect, (
-                f"Expected at least {total_to_collect} frames, got {rb.write_count}"
-            )
+            assert (
+                rb.write_count >= total_to_collect
+            ), f"Expected at least {total_to_collect} frames, got {rb.write_count}"
 
             # Verify that data has expected structure
             sample = rb[:16]
@@ -5964,9 +6054,9 @@ class TestTrajsPerBatchReplayBuffer:
         finally:
             env.close(raise_if_closed=False)
 
-        assert len(rb) >= num_trajs, (
-            "replay buffer must have at least num_trajs entries"
-        )
+        assert (
+            len(rb) >= num_trajs
+        ), "replay buffer must have at least num_trajs entries"
         sample = rb.sample(num_trajs)
         assert sample.ndim == 1
         assert ("collector", "traj_ids") in sample.keys(True)
@@ -6119,9 +6209,9 @@ class TestTrajsPerBatchReplayBuffer:
         assert len(rb) > 0
         # Storage is 1-D: each entry is one timestep, not an env-batch slice
         sample = rb.sample(4)
-        assert sample.ndim == 1, (
-            f"Expected 1-D storage (flat timesteps) but got ndim={sample.ndim}"
-        )
+        assert (
+            sample.ndim == 1
+        ), f"Expected 1-D storage (flat timesteps) but got ndim={sample.ndim}"
         assert ("collector", "traj_ids") in sample.keys(True)
 
     # ------------------------------------------------------------------
@@ -6167,9 +6257,9 @@ class TestTrajsPerBatchReplayBuffer:
         for i in range(num_slices):
             slice_data = sample_reshaped[i]
             tids = slice_data[("collector", "traj_ids")]
-            assert (tids == tids[0]).all(), (
-                f"slice {i}: traj_ids should be constant within a slice"
-            )
+            assert (
+                tids == tids[0]
+            ).all(), f"slice {i}: traj_ids should be constant within a slice"
 
     def test_trajs_per_batch_slice_sampler_batched_env(self):
         """SliceSampler + batched env: slices respect episode boundaries.
@@ -6287,9 +6377,9 @@ class TestTrajsPerBatchReplayBuffer:
         finally:
             collector.shutdown()
 
-        assert len(rb) >= max_steps * num_trajs, (
-            f"replay buffer must have enough entries, got {len(rb)}"
-        )
+        assert (
+            len(rb) >= max_steps * num_trajs
+        ), f"replay buffer must have enough entries, got {len(rb)}"
         sample = rb.sample(num_trajs)
         assert ("collector", "traj_ids") in sample.keys(True)
         self._assert_rb_trajectories_complete(rb)
@@ -6416,12 +6506,12 @@ class TestTrajsPerBatchReplayBuffer:
                     done = traj_batch[("next", "done")]
                     for i in range(traj_batch.shape[0]):
                         row_mask = mask[i]
-                        assert is_init[i][row_mask][0].any(), (
-                            f"row {i}: first valid step must have is_init=True"
-                        )
-                        assert done[i][row_mask][-1].any(), (
-                            f"row {i}: last valid step must have done=True"
-                        )
+                        assert is_init[i][row_mask][
+                            0
+                        ].any(), f"row {i}: first valid step must have is_init=True"
+                        assert done[i][row_mask][
+                            -1
+                        ].any(), f"row {i}: last valid step must have done=True"
             finally:
                 collector.shutdown()
         finally:
@@ -6482,12 +6572,12 @@ class TestTrajsPerBatchReplayBuffer:
                     idx = traj_ids == tid
                     if not done[idx].any():
                         continue  # partial trajectory at buffer boundary
-                    assert is_init[idx][0].any(), (
-                        f"traj {tid}: first step must have is_init=True"
-                    )
-                    assert done[idx][-1].any(), (
-                        f"traj {tid}: last step must have done=True"
-                    )
+                    assert is_init[idx][
+                        0
+                    ].any(), f"traj {tid}: first step must have is_init=True"
+                    assert done[idx][
+                        -1
+                    ].any(), f"traj {tid}: last step must have done=True"
         finally:
             collector.shutdown()
 

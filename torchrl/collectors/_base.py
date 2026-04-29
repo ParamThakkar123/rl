@@ -228,6 +228,8 @@ class BaseCollector(IterableDataset, metaclass=abc.ABCMeta):
     verbose: bool = False
     _profile_config: ProfileConfig | None = None
     trajs_per_batch: int | None = None
+    _pre_collect_hook: Callable[[], None] | None = None
+    _post_collect_hook: Callable[[TensorDictBase], None] | None = None
 
     def __init__(
         self,
@@ -235,12 +237,8 @@ class BaseCollector(IterableDataset, metaclass=abc.ABCMeta):
         pre_collect_hook: Callable[[], None] | None = None,
         post_collect_hook: Callable[[TensorDictBase], None] | None = None,
     ):
-        self._pre_collect_hook = (
-            pre_collect_hook if pre_collect_hook is not None else None
-        )
-        self._post_collect_hook = (
-            post_collect_hook if post_collect_hook is not None else None
-        )
+        self._pre_collect_hook = pre_collect_hook
+        self._post_collect_hook = post_collect_hook
 
     @property
     def pre_collect_hook(self) -> Callable[[], None] | None:
@@ -484,10 +482,10 @@ class BaseCollector(IterableDataset, metaclass=abc.ABCMeta):
         list_of_args: list[tuple] | None = None,
         list_of_kwargs: list[dict] | None = None,
     ) -> list[Any]:
-        """Apply a method to each set of arguments in parallel.
+        """Apply a method to each set of arguments.
 
-        This method allows remote callers to execute a method on the collector
-        with different arguments, returning a list of results.
+        This method executes a method on the collector with different arguments,
+        returning a list of results.
 
         Args:
             method_name: Name of the method to call on the collector.
@@ -693,7 +691,8 @@ class BaseCollector(IterableDataset, metaclass=abc.ABCMeta):
         self,
         policy_or_weights: TensorDictBase | TensorDictModuleBase | nn.Module | dict,
         /,
-    ) -> None: ...
+    ) -> None:
+        ...
 
     @overload
     def update_policy_weights_(
@@ -703,7 +702,8 @@ class BaseCollector(IterableDataset, metaclass=abc.ABCMeta):
         *,
         worker_ids: int | list[int] | torch.device | list[torch.device] | None = None,
         model_id: str | None = None,
-    ) -> None: ...
+    ) -> None:
+        ...
 
     @overload
     def update_policy_weights_(
@@ -712,7 +712,8 @@ class BaseCollector(IterableDataset, metaclass=abc.ABCMeta):
         weights: TensorDictBase | dict,
         model_id: str | None = None,
         worker_ids: int | list[int] | torch.device | list[torch.device] | None = None,
-    ) -> None: ...
+    ) -> None:
+        ...
 
     @overload
     def update_policy_weights_(
@@ -721,7 +722,8 @@ class BaseCollector(IterableDataset, metaclass=abc.ABCMeta):
         policy: TensorDictModuleBase | nn.Module,
         model_id: str | None = None,
         worker_ids: int | list[int] | torch.device | list[torch.device] | None = None,
-    ) -> None: ...
+    ) -> None:
+        ...
 
     @overload
     def update_policy_weights_(
@@ -731,7 +733,8 @@ class BaseCollector(IterableDataset, metaclass=abc.ABCMeta):
             str, TensorDictBase | TensorDictModuleBase | nn.Module | dict
         ],
         worker_ids: int | list[int] | torch.device | list[torch.device] | None = None,
-    ) -> None: ...
+    ) -> None:
+        ...
 
     def update_policy_weights_(
         self,
@@ -955,28 +958,32 @@ class BaseCollector(IterableDataset, metaclass=abc.ABCMeta):
 
     # Overloads for receive_weights to support multiple calling conventions
     @overload
-    def receive_weights(self) -> None: ...
+    def receive_weights(self) -> None:
+        ...
 
     @overload
     def receive_weights(
         self,
         policy_or_weights: TensorDictBase | TensorDictModuleBase | nn.Module | dict,
         /,
-    ) -> None: ...
+    ) -> None:
+        ...
 
     @overload
     def receive_weights(
         self,
         *,
         weights: TensorDictBase | dict,
-    ) -> None: ...
+    ) -> None:
+        ...
 
     @overload
     def receive_weights(
         self,
         *,
         policy: TensorDictModuleBase | nn.Module,
-    ) -> None: ...
+    ) -> None:
+        ...
 
     def receive_weights(
         self,

@@ -450,6 +450,7 @@ class Collector(BaseCollector):
         track_policy_version: bool = False,
         worker_idx: int | None = None,
         trajs_per_batch: int | None = None,
+        pre_collect_hook: Callable[[], None] | None = None,
         post_collect_hook: Callable[[TensorDictBase], None] | None = None,
         **kwargs,
     ):
@@ -457,7 +458,7 @@ class Collector(BaseCollector):
         self.worker_idx = worker_idx
         self.trajs_per_batch = trajs_per_batch
         super().__init__(
-            pre_collect_hook=None,
+            pre_collect_hook=pre_collect_hook,
             post_collect_hook=post_collect_hook,
         )
 
@@ -844,13 +845,13 @@ class Collector(BaseCollector):
         """Returns the compiled policy, compiling it lazily if needed."""
         if (policy := self._wrapped_policy_maybe_compiled) is None:
             if self.compiled_policy or self.cudagraphed_policy:
-                policy = self._wrapped_policy_maybe_compiled = (
-                    self._compile_wrapped_policy(self._wrapped_policy_uncompiled)
-                )
+                policy = (
+                    self._wrapped_policy_maybe_compiled
+                ) = self._compile_wrapped_policy(self._wrapped_policy_uncompiled)
             else:
-                policy = self._wrapped_policy_maybe_compiled = (
-                    self._wrapped_policy_uncompiled
-                )
+                policy = (
+                    self._wrapped_policy_maybe_compiled
+                ) = self._wrapped_policy_uncompiled
         return policy
 
     @property
@@ -1425,6 +1426,8 @@ class Collector(BaseCollector):
                         for event in events:
                             event.record()
                             event.synchronize()
+                    if self.post_collect_hook is not None:
+                        self.post_collect_hook(tensordict_out)
                     yield tensordict_out
                 elif self.replay_buffer is not None and not self._ignore_rb:
                     self.replay_buffer.extend(tensordict_out)
@@ -1440,7 +1443,10 @@ class Collector(BaseCollector):
                     # >>>      else:
                     # >>>          break
                     # >>> assert data0["done"] is not data1["done"]
-                    yield tensordict_out.clone()
+                    tensordict_out = tensordict_out.clone()
+                    if self.post_collect_hook is not None:
+                        self.post_collect_hook(tensordict_out)
+                    yield tensordict_out
 
         # Stop profiler if it hasn't been stopped yet
         if profiler is not None and profiler.is_active:
@@ -1805,12 +1811,7 @@ class Collector(BaseCollector):
                     result = TensorDict.maybe_dense_stack(tensordicts, dim=-1)
                     result.refine_names(..., "time")
 
-        result = self._maybe_set_truncated(result)
-
-        if self.post_collect_hook is not None:
-            self.post_collect_hook(result)
-
-        return result
+        return self._maybe_set_truncated(result)
 
     def _maybe_set_truncated(self, final_rollout):
         last_step = (slice(None),) * (final_rollout.ndim - 1) + (-1,)
