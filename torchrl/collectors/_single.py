@@ -438,22 +438,29 @@ class Collector(BaseCollector):
         use_buffers: bool | None = None,
         replay_buffer: ReplayBuffer | None = None,
         extend_buffer: bool = True,
-        local_init_rb: bool | None = None,
         trust_policy: bool | None = None,
         compile_policy: bool | dict[str, Any] | None = None,
         cudagraph_policy: bool | dict[str, Any] | None = None,
         no_cuda_sync: bool = False,
-        weight_updater: WeightUpdaterBase
-        | Callable[[], WeightUpdaterBase]
-        | None = None,
+        weight_updater: (
+            WeightUpdaterBase | Callable[[], WeightUpdaterBase] | None
+        ) = None,
         weight_sync_schemes: dict[str, WeightSyncScheme] | None = None,
         weight_recv_schemes: dict[str, WeightSyncScheme] | None = None,
         track_policy_version: bool = False,
         worker_idx: int | None = None,
+        trajs_per_batch: int | None = None,
+        pre_collect_hook: Callable[[], None] | None = None,
+        post_collect_hook: Callable[[TensorDictBase], None] | None = None,
         **kwargs,
     ):
         self.closed = True
         self.worker_idx = worker_idx
+        self.trajs_per_batch = trajs_per_batch
+        super().__init__(
+            pre_collect_hook=pre_collect_hook,
+            post_collect_hook=post_collect_hook,
+        )
 
         # Note: weight_sync_schemes can be used to send weights to components
         # within the environment (e.g., RayModuleTransform), not just sub-collectors
@@ -491,7 +498,6 @@ class Collector(BaseCollector):
         self._setup_replay_buffer(
             replay_buffer=replay_buffer,
             extend_buffer=extend_buffer,
-            local_init_rb=local_init_rb,
             postproc=postproc,
             split_trajs=split_trajs,
             return_same_td=return_same_td,
@@ -604,6 +610,12 @@ class Collector(BaseCollector):
         elif policy_factory is not None:
             raise TypeError("policy_factory cannot be used with policy argument.")
 
+        # Lazily initialize a RandomPolicy that was constructed without an
+        # action_spec (supports both `policy=RandomPolicy()` and a
+        # `policy_factory` that returns one).
+        if isinstance(policy, RandomPolicy):
+            policy.set_action_spec_from_env(env)
+
         if trust_policy is None:
             trust_policy = isinstance(policy, (RandomPolicy, CudaGraphModule))
         self.trust_policy = trust_policy
@@ -686,7 +698,6 @@ class Collector(BaseCollector):
         self,
         replay_buffer: ReplayBuffer | None,
         extend_buffer: bool,
-        local_init_rb: bool | None,
         postproc: Callable | None,
         split_trajs: bool | None,
         return_same_td: bool,
@@ -695,17 +706,7 @@ class Collector(BaseCollector):
         """Set up replay buffer configuration and validate compatibility."""
         self.replay_buffer = replay_buffer
         self.extend_buffer = extend_buffer
-
-        # Handle local_init_rb deprecation
-        if local_init_rb is None:
-            local_init_rb = False
-            if replay_buffer is not None and not local_init_rb:
-                warnings.warn(
-                    "local_init_rb=False is deprecated and will be removed in v0.12. "
-                    "The new storage-level initialization provides better performance.",
-                    FutureWarning,
-                )
-        self.local_init_rb = local_init_rb
+        self.local_init_rb = True
 
         # Validate replay buffer compatibility
         if self.replay_buffer is not None and not self._ignore_rb:
@@ -1098,9 +1099,11 @@ class Collector(BaseCollector):
         elif (
             not make_rollout
             and hasattr(
-                self._wrapped_policy_uncompiled
-                if has_meta_params
-                else self._wrapped_policy,
+                (
+                    self._wrapped_policy_uncompiled
+                    if has_meta_params
+                    else self._wrapped_policy
+                ),
                 "out_keys",
             )
             and (
@@ -1423,6 +1426,8 @@ class Collector(BaseCollector):
                         for event in events:
                             event.record()
                             event.synchronize()
+                    if self.post_collect_hook is not None:
+                        self.post_collect_hook(tensordict_out)
                     yield tensordict_out
                 elif self.replay_buffer is not None and not self._ignore_rb:
                     self.replay_buffer.extend(tensordict_out)
@@ -1438,7 +1443,10 @@ class Collector(BaseCollector):
                     # >>>      else:
                     # >>>          break
                     # >>> assert data0["done"] is not data1["done"]
-                    yield tensordict_out.clone()
+                    tensordict_out = tensordict_out.clone()
+                    if self.post_collect_hook is not None:
+                        self.post_collect_hook(tensordict_out)
+                    yield tensordict_out
 
         # Stop profiler if it hasn't been stopped yet
         if profiler is not None and profiler.is_active:
@@ -1610,6 +1618,9 @@ class Collector(BaseCollector):
             TensorDictBase containing the computed rollout.
 
         """
+        if self.pre_collect_hook is not None:
+            self.pre_collect_hook()
+
         if self.reset_at_each_iter:
             self._carrier.update(self.env.reset())
 
@@ -1629,11 +1640,11 @@ class Collector(BaseCollector):
                     ):
                         # TODO: This may break with exclusive / ragged lazy stacks
                         self._carrier.apply(
-                            lambda name, val: val.to(
-                                device=self.policy_device, non_blocking=True
-                            )
-                            if name in self._policy_output_keys
-                            else val,
+                            lambda name, val: (
+                                val.to(device=self.policy_device, non_blocking=True)
+                                if name in self._policy_output_keys
+                                else val
+                            ),
                             out=self._carrier,
                             named=True,
                             nested_keys=True,
@@ -1859,6 +1870,11 @@ class Collector(BaseCollector):
         """
         try:
             if not self.closed:
+                # Stop the background thread if one is running (from .start())
+                # before tearing down the env it may still be using.
+                self._stop = True
+                if hasattr(self, "_thread") and self._thread.is_alive():
+                    self._thread.join(timeout=timeout)
                 self.closed = True
                 del self._carrier
                 if self._use_buffers:
