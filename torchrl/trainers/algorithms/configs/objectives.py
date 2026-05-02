@@ -16,12 +16,13 @@ from torchrl.objectives import (
     IQLLoss,
     KLPENPPOLoss,
     PPOLoss,
+    QMixerLoss,
     SACLoss,
     TD3Loss,
 )
 from torchrl.objectives.iql import DiscreteIQLLoss
 from torchrl.objectives.sac import DiscreteSACLoss
-from torchrl.trainers.algorithms.configs.common import ConfigBase
+from torchrl.trainers.algorithms.configs.common import _normalize_hydra_key, ConfigBase
 
 
 @dataclass
@@ -82,6 +83,7 @@ class SACLossConfig(LossConfig):
 
 def _make_sac_loss(*args, **kwargs) -> SACLoss:
     discrete_loss_type = kwargs.pop("discrete", False)
+    gamma = kwargs.pop("gamma", None)
 
     # Instantiate networks if they are config objects
     actor_network = kwargs.get("actor_network")
@@ -96,9 +98,12 @@ def _make_sac_loss(*args, **kwargs) -> SACLoss:
         kwargs["value_network"] = value_network()
 
     if discrete_loss_type:
-        return DiscreteSACLoss(*args, **kwargs)
+        loss = DiscreteSACLoss(*args, **kwargs)
     else:
-        return SACLoss(*args, **kwargs)
+        loss = SACLoss(*args, **kwargs)
+    if gamma is not None:
+        loss.make_value_estimator(gamma=gamma)
+    return loss
 
 
 @dataclass
@@ -149,6 +154,7 @@ class PPOLossConfig(LossConfig):
 
 def _make_ppo_loss(*args, **kwargs) -> PPOLoss:
     loss_type = kwargs.pop("loss_type", "clip")
+    gamma = kwargs.pop("gamma", None)
     # Drop kwargs that don't apply to the chosen loss flavor so each class
     # receives only what its __init__ accepts.
     clip_only = {"clip_epsilon"}
@@ -165,17 +171,20 @@ def _make_ppo_loss(*args, **kwargs) -> PPOLoss:
     if loss_type == "clip":
         for k in kl_only | ppo_only:
             kwargs.pop(k, None)
-        return ClipPPOLoss(*args, **kwargs)
+        loss = ClipPPOLoss(*args, **kwargs)
     elif loss_type == "kl":
         for k in clip_only | ppo_only:
             kwargs.pop(k, None)
-        return KLPENPPOLoss(*args, **kwargs)
+        loss = KLPENPPOLoss(*args, **kwargs)
     elif loss_type == "ppo":
         for k in clip_only | kl_only:
             kwargs.pop(k, None)
-        return PPOLoss(*args, **kwargs)
+        loss = PPOLoss(*args, **kwargs)
     else:
         raise ValueError(f"Invalid loss type: {loss_type}")
+    if gamma is not None:
+        loss.make_value_estimator(gamma=gamma)
+    return loss
 
 
 @dataclass
@@ -205,6 +214,8 @@ class TD3LossConfig(LossConfig):
 
 
 def _make_td3_loss(*args, **kwargs) -> TD3Loss:
+    gamma = kwargs.pop("gamma", None)
+
     # Instantiate networks if they are config objects
     actor_network = kwargs.get("actor_network")
     qvalue_network = kwargs.get("qvalue_network")
@@ -214,7 +225,10 @@ def _make_td3_loss(*args, **kwargs) -> TD3Loss:
     if qvalue_network is not None and hasattr(qvalue_network, "_target_"):
         kwargs["qvalue_network"] = qvalue_network()
 
-    return TD3Loss(*args, **kwargs)
+    loss = TD3Loss(*args, **kwargs)
+    if gamma is not None:
+        loss.make_value_estimator(gamma=gamma)
+    return loss
 
 
 @dataclass
@@ -288,6 +302,14 @@ class DQNLossConfig(LossConfig):
     priority_key: str | None = None
     reduction: str | None = None
     use_prioritized_weights: str | bool = "auto"
+    action_key: Any = None
+    action_value_key: Any = None
+    value_key: Any = None
+    reward_key: Any = None
+    done_key: Any = None
+    terminated_key: Any = None
+    priority_key: Any = None
+    priority_weight_key: Any = None
     _target_: str = "torchrl.trainers.algorithms.configs.objectives._make_dqn_loss"
 
     def __post_init__(self) -> None:
@@ -295,10 +317,89 @@ class DQNLossConfig(LossConfig):
 
 
 def _make_dqn_loss(*args, **kwargs) -> DQNLoss:
+    tensor_keys = {}
+    for key in (
+        "action_key",
+        "action_value_key",
+        "value_key",
+        "reward_key",
+        "done_key",
+        "terminated_key",
+        "priority_key",
+        "priority_weight_key",
+    ):
+        if key in kwargs:
+            value = kwargs.pop(key)
+            if value is not None:
+                tensor_keys[key.removesuffix("_key")] = _normalize_hydra_key(value)
+
     value_network = kwargs.get("value_network")
+    gamma = kwargs.pop("gamma", None)
+
     if value_network is not None and hasattr(value_network, "_target_"):
         kwargs["value_network"] = value_network()
-    return DQNLoss(*args, **kwargs)
+    loss = DQNLoss(*args, **kwargs)
+    if tensor_keys:
+        loss.set_keys(**tensor_keys)
+    if gamma is not None:
+        loss.make_value_estimator(gamma=gamma)
+    return loss
+
+
+@dataclass
+class QMixerLossConfig(LossConfig):
+    """A class to configure a QMixer loss."""
+
+    local_value_network: Any = None
+    mixer_network: Any = None
+    loss_function: str = "l2"
+    delay_value: bool = True
+    action_space: Any = None
+    gamma: float | None = None
+    priority_key: str | None = None
+    action_key: Any = None
+    action_value_key: Any = None
+    local_value_key: Any = None
+    global_value_key: Any = None
+    reward_key: Any = None
+    done_key: Any = None
+    terminated_key: Any = None
+    _target_: str = "torchrl.trainers.algorithms.configs.objectives._make_qmixer_loss"
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+
+def _make_qmixer_loss(*args, **kwargs) -> QMixerLoss:
+    tensor_keys = {}
+    for key in (
+        "action_key",
+        "action_value_key",
+        "local_value_key",
+        "global_value_key",
+        "reward_key",
+        "done_key",
+        "terminated_key",
+        "priority_key",
+    ):
+        if key in kwargs:
+            value = kwargs.pop(key)
+            if value is not None:
+                tensor_keys[key.removesuffix("_key")] = _normalize_hydra_key(value)
+    local_value_network = kwargs.get("local_value_network")
+    mixer_network = kwargs.get("mixer_network")
+    gamma = kwargs.pop("gamma", None)
+
+    if local_value_network is not None and hasattr(local_value_network, "_target_"):
+        kwargs["local_value_network"] = local_value_network()
+    if mixer_network is not None and hasattr(mixer_network, "_target_"):
+        kwargs["mixer_network"] = mixer_network()
+
+    loss = QMixerLoss(*args, **kwargs)
+    loss.set_keys(**tensor_keys)
+    if gamma is not None:
+        loss.make_value_estimator(gamma=gamma)
+    return loss
 
 
 @dataclass
@@ -324,13 +425,18 @@ class DDPGLossConfig(LossConfig):
 
 
 def _make_ddpg_loss(*args, **kwargs) -> DDPGLoss:
+    gamma = kwargs.pop("gamma", None)
+
     actor_network = kwargs.get("actor_network")
     value_network = kwargs.get("value_network")
     if actor_network is not None and hasattr(actor_network, "_target_"):
         kwargs["actor_network"] = actor_network()
     if value_network is not None and hasattr(value_network, "_target_"):
         kwargs["value_network"] = value_network()
-    return DDPGLoss(*args, **kwargs)
+    loss = DDPGLoss(*args, **kwargs)
+    if gamma is not None:
+        loss.make_value_estimator(gamma=gamma)
+    return loss
 
 
 @dataclass
@@ -365,6 +471,8 @@ class IQLLossConfig(LossConfig):
 
 def _make_iql_loss(*args, **kwargs) -> IQLLoss:
     discrete_loss_type = kwargs.pop("discrete", False)
+    gamma = kwargs.pop("gamma", None)
+
     actor_network = kwargs.get("actor_network")
     qvalue_network = kwargs.get("qvalue_network")
     value_network = kwargs.get("value_network")
@@ -377,10 +485,14 @@ def _make_iql_loss(*args, **kwargs) -> IQLLoss:
     if discrete_loss_type:
         # DiscreteIQLLoss has no `deactivate_vmap` kwarg.
         kwargs.pop("deactivate_vmap", None)
-        return DiscreteIQLLoss(*args, **kwargs)
-    # IQLLoss has no `action_space` kwarg.
-    kwargs.pop("action_space", None)
-    return IQLLoss(*args, **kwargs)
+        loss = DiscreteIQLLoss(*args, **kwargs)
+    else:
+        # IQLLoss has no `action_space` kwarg.
+        kwargs.pop("action_space", None)
+        loss = IQLLoss(*args, **kwargs)
+    if gamma is not None:
+        loss.make_value_estimator(gamma=gamma)
+    return loss
 
 
 @dataclass
@@ -419,10 +531,15 @@ class CQLLossConfig(LossConfig):
 
 
 def _make_cql_loss(*args, **kwargs) -> CQLLoss:
+    gamma = kwargs.pop("gamma", None)
+
     actor_network = kwargs.get("actor_network")
     qvalue_network = kwargs.get("qvalue_network")
     if actor_network is not None and hasattr(actor_network, "_target_"):
         kwargs["actor_network"] = actor_network()
     if qvalue_network is not None and hasattr(qvalue_network, "_target_"):
         kwargs["qvalue_network"] = qvalue_network()
-    return CQLLoss(*args, **kwargs)
+    loss = CQLLoss(*args, **kwargs)
+    if gamma is not None:
+        loss.make_value_estimator(gamma=gamma)
+    return loss
