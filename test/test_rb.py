@@ -1466,6 +1466,246 @@ def test_ptdrb(priority_key, contiguous, alpha, device):
     torch.testing.assert_close(td2[idx0].get("a").view(1), s.get("a").unique().view(1))
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_cuda_segment_tree_parity():
+    ext = pytest.importorskip("torchrl._torchrl")
+    if not hasattr(ext, "CudaSumSegmentTreeFp32"):
+        pytest.skip("TorchRL was not built with CUDA segment tree support")
+    CudaMinSegmentTreeFp32 = ext.CudaMinSegmentTreeFp32
+    CudaSumSegmentTreeFp32 = ext.CudaSumSegmentTreeFp32
+    MinSegmentTreeFp32 = ext.MinSegmentTreeFp32
+    SumSegmentTreeFp32 = ext.SumSegmentTreeFp32
+
+    device = torch.device("cuda:0")
+    size = 16
+    index = torch.tensor([0, 3, 4, 7, 12, 15], device=device)
+    value = torch.tensor([1.0, 2.0, 4.0, 8.0, 16.0, 32.0], device=device)
+
+    cpu_sum = SumSegmentTreeFp32(size)
+    cpu_min = MinSegmentTreeFp32(size)
+    cuda_sum = CudaSumSegmentTreeFp32(size, device)
+    cuda_min = CudaMinSegmentTreeFp32(size, device)
+
+    cpu_sum[index.cpu()] = value.cpu()
+    cpu_min[index.cpu()] = value.cpu()
+    cuda_sum[index] = value
+    cuda_min[index] = value
+
+    left = torch.tensor([0, 3, 4, 7], device=device)
+    right = torch.tensor([16, 8, 13, 16], device=device)
+    torch.testing.assert_close(
+        cuda_sum.query(left, right).cpu(), cpu_sum.query(left.cpu(), right.cpu())
+    )
+    torch.testing.assert_close(
+        cuda_min.query(left, right).cpu(), cpu_min.query(left.cpu(), right.cpu())
+    )
+
+    mass = torch.tensor([0.5, 1.0, 2.9, 7.1, 30.0], device=device)
+    torch.testing.assert_close(
+        cuda_sum.scan_lower_bound(mass).cpu(),
+        cpu_sum.scan_lower_bound(mass.cpu()),
+    )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_cuda_prioritized_replay_buffer_samples_on_cuda():
+    ext = pytest.importorskip("torchrl._torchrl")
+    if not hasattr(ext, "CudaSumSegmentTreeFp32"):
+        pytest.skip("TorchRL was not built with CUDA segment tree support")
+    device = torch.device("cuda:0")
+    rb = TensorDictReplayBuffer(
+        storage=LazyTensorStorage(32, device=device),
+        sampler=PrioritizedSampler(max_capacity=32, alpha=0.7, beta=0.5),
+        batch_size=8,
+        priority_key="td_error",
+    )
+    data = TensorDict(
+        {
+            "obs": torch.arange(16, device=device).float().unsqueeze(-1),
+            "td_error": torch.linspace(0.1, 1.0, 16, device=device),
+        },
+        batch_size=[16],
+        device=device,
+    )
+
+    rb.extend(data)
+    sample = rb.sample()
+
+    assert sample.device == device
+    assert sample["index"].device == device
+    assert sample["priority_weight"].device == device
+
+    sample["td_error"] = torch.ones_like(sample["td_error"]) * 10
+    rb.update_tensordict_priority(sample)
+    sample = rb.sample()
+    assert sample["index"].device == device
+    assert sample["priority_weight"].device == device
+
+
+def test_tensordict_prioritized_replay_buffer_sampler_device_cpu():
+    rb = TensorDictPrioritizedReplayBuffer(
+        alpha=0.7,
+        beta=0.5,
+        storage=LazyTensorStorage(32),
+        sampler_device="cpu",
+        batch_size=8,
+        priority_key="td_error",
+    )
+    data = TensorDict(
+        {
+            "obs": torch.arange(16).float().unsqueeze(-1),
+            "td_error": torch.linspace(0.1, 1.0, 16),
+        },
+        batch_size=[16],
+    )
+
+    rb.extend(data)
+    sample = rb.sample()
+
+    assert rb._sampler.device == torch.device("cpu")
+    assert sample["index"].device == torch.device("cpu")
+    assert sample["priority_weight"].device == torch.device("cpu")
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_tensordict_prioritized_replay_buffer_memmap_storage_cuda_sampler(tmpdir):
+    ext = pytest.importorskip("torchrl._torchrl")
+    if not hasattr(ext, "CudaSumSegmentTreeFp32"):
+        pytest.skip("TorchRL was not built with CUDA segment tree support")
+
+    rb = TensorDictPrioritizedReplayBuffer(
+        alpha=0.7,
+        beta=0.5,
+        storage=LazyMemmapStorage(32, scratch_dir=tmpdir),
+        sampler_device="cuda:0",
+        batch_size=8,
+        priority_key="td_error",
+    )
+    data = TensorDict(
+        {
+            "obs": torch.arange(16).float().unsqueeze(-1),
+            "td_error": torch.linspace(0.1, 1.0, 16),
+        },
+        batch_size=[16],
+    )
+
+    rb.extend(data)
+    sample = rb.sample()
+
+    assert rb._sampler.device == torch.device("cuda:0")
+    assert sample["obs"].device.type == "cpu"
+    assert sample["index"].device.type == "cpu"
+    assert sample["priority_weight"].device.type == "cpu"
+
+    sample["td_error"] = torch.ones_like(sample["td_error"]) * 10
+    rb.update_tensordict_priority(sample)
+    sample = rb.sample()
+    assert sample["index"].device.type == "cpu"
+    assert rb._sampler.device == torch.device("cuda:0")
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_tensordict_prioritized_replay_buffer_cuda_storage_cpu_sampler():
+    device = torch.device("cuda:0")
+    rb = TensorDictPrioritizedReplayBuffer(
+        alpha=0.7,
+        beta=0.5,
+        storage=LazyTensorStorage(32, device=device),
+        sampler_device="cpu",
+        batch_size=8,
+        priority_key="td_error",
+    )
+    data = TensorDict(
+        {
+            "obs": torch.arange(16, device=device).float().unsqueeze(-1),
+            "td_error": torch.linspace(0.1, 1.0, 16, device=device),
+        },
+        batch_size=[16],
+        device=device,
+    )
+
+    rb.extend(data)
+    sample = rb.sample()
+
+    assert rb._sampler.device == torch.device("cpu")
+    assert sample.device == device
+    assert sample["index"].device == device
+    assert sample["priority_weight"].device == device
+
+    sample["td_error"] = torch.ones_like(sample["td_error"]) * 10
+    rb.update_tensordict_priority(sample)
+    sample = rb.sample()
+    assert sample.device == device
+    assert rb._sampler.device == torch.device("cpu")
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_cuda_prioritized_replay_buffer_weight_matches_cpu_formula():
+    ext = pytest.importorskip("torchrl._torchrl")
+    if not hasattr(ext, "CudaSumSegmentTreeFp32"):
+        pytest.skip("TorchRL was not built with CUDA segment tree support")
+
+    size = 64
+    batch_size = 16
+    alpha = 0.7
+    beta = 0.5
+    eps = 1e-8
+    priorities = torch.linspace(0.1, 2.0, size)
+    expected_tree_priority = (priorities + eps).pow(alpha)
+    min_tree_priority = expected_tree_priority.min()
+
+    def make_rb(device):
+        device = torch.device(device)
+        rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(size, device=device),
+            sampler=PrioritizedSampler(
+                max_capacity=size,
+                alpha=alpha,
+                beta=beta,
+                eps=eps,
+                device=device,
+            ),
+            batch_size=batch_size,
+            priority_key="td_error",
+        )
+        data = TensorDict(
+            {
+                "obs": torch.arange(size, device=device),
+                "td_error": priorities.to(device),
+            },
+            batch_size=[size],
+            device=device,
+        )
+        rb.extend(data)
+        return rb
+
+    cpu_rb = make_rb("cpu")
+    cuda_rb = make_rb("cuda:0")
+
+    for rb, device in (
+        (cpu_rb, torch.device("cpu")),
+        (cuda_rb, torch.device("cuda:0")),
+    ):
+        for _ in range(8):
+            sample = rb.sample()
+            index = sample["index"].to("cpu")
+            expected_weight = (expected_tree_priority[index] / min_tree_priority).pow(
+                -beta
+            )
+            torch.testing.assert_close(sample["obs"].to("cpu"), index)
+            torch.testing.assert_close(sample["td_error"].to("cpu"), priorities[index])
+            torch.testing.assert_close(
+                sample["priority_weight"].to("cpu"), expected_weight
+            )
+            assert sample["index"].device == device
+            assert sample["priority_weight"].device == device
+
+
 @pytest.mark.parametrize("stack", [False, True])
 @pytest.mark.parametrize("datatype", ["tc", "tb"])
 @pytest.mark.parametrize("reduction", ["min", "max", "median", "mean"])
@@ -1863,6 +2103,58 @@ class TestBuffers:
         rb.extend(data)
         assert len(rb[: size - 1]) == size - 1
         assert len(rb[size - 2 :]) == 1
+
+
+def test_replay_buffer_set_at_():
+    """Tests that set_at_ writes through to storage in-place."""
+    from tensordict import TensorDict
+
+    rb = ReplayBuffer(
+        storage=LazyTensorStorage(10),
+        batch_size=5,
+    )
+    data = TensorDict({"a": torch.zeros(10), "b": torch.ones(10)}, batch_size=[10])
+    rb.extend(data)
+    # Modify key "a" at indices [2, 5]
+    rb.set_at_("a", torch.tensor([99.0, 99.0]), torch.tensor([2, 5]))
+    assert rb["a"][2] == 99.0
+    assert rb["a"][5] == 99.0
+    assert rb["a"][0] == 0.0  # unchanged
+    assert rb["b"][2] == 1.0  # other key unchanged
+
+
+def test_replay_buffer_set_():
+    """Tests that set_ writes through to storage in-place."""
+    from tensordict import TensorDict
+
+    rb = ReplayBuffer(
+        storage=LazyTensorStorage(10),
+        batch_size=5,
+    )
+    data = TensorDict({"a": torch.zeros(10), "b": torch.ones(10)}, batch_size=[10])
+    rb.extend(data)
+    rb.set_("a", torch.full((10,), 42.0))
+    assert (rb["a"] == 42.0).all()
+    assert (rb["b"] == 1.0).all()  # other key unchanged
+
+
+def test_replay_buffer_update_():
+    """Tests that update_ writes through to storage in-place."""
+    from tensordict import TensorDict
+
+    rb = ReplayBuffer(
+        storage=LazyTensorStorage(10),
+        batch_size=5,
+    )
+    data = TensorDict({"a": torch.zeros(10), "b": torch.ones(10)}, batch_size=[10])
+    rb.extend(data)
+    update = TensorDict(
+        {"a": torch.full((10,), 7.0), "b": torch.full((10,), 8.0)},
+        batch_size=[10],
+    )
+    rb.update_(update)
+    assert (rb["a"] == 7.0).all()
+    assert (rb["b"] == 8.0).all()
 
 
 def test_multi_loops():
@@ -3491,6 +3783,242 @@ class TestSamplers:
         )
 
 
+class TestStalenessAwareSampler:
+    """Tests for StalenessAwareSampler."""
+
+    def _make_buffer_with_versions(self, n_entries=100, version_range=(0, 5)):
+        """Create a replay buffer populated with data containing policy_version."""
+        from torchrl.data.replay_buffers.samplers import StalenessAwareSampler
+
+        sampler = StalenessAwareSampler(max_staleness=-1)
+        rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(n_entries),
+            sampler=sampler,
+            batch_size=16,
+        )
+        # Fill with data having varying policy versions
+        for v in range(version_range[0], version_range[1] + 1):
+            batch = TensorDict(
+                {
+                    "observation": torch.randn(20, 4),
+                    "action": torch.randn(20, 2),
+                    "policy_version": torch.full((20,), float(v)),
+                },
+                batch_size=[20],
+            )
+            rb.extend(batch)
+        return rb, sampler
+
+    def test_basic_sampling(self):
+        """Test that StalenessAwareSampler can sample from a buffer."""
+        rb, sampler = self._make_buffer_with_versions()
+        sampler.consumer_version = 5
+        batch = rb.sample()
+        assert batch is not None
+        assert batch.shape[0] == 16
+
+    def test_freshness_weighting(self):
+        """Test that fresher entries are sampled more frequently."""
+        from torchrl.data.replay_buffers.samplers import StalenessAwareSampler
+
+        sampler = StalenessAwareSampler(max_staleness=-1)
+        rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(200),
+            sampler=sampler,
+            batch_size=32,
+        )
+        # Add 100 entries at version 0 (stale) and 100 at version 9 (fresh)
+        stale = TensorDict(
+            {
+                "observation": torch.zeros(100, 4),
+                "policy_version": torch.full((100,), 0.0),
+            },
+            batch_size=[100],
+        )
+        fresh = TensorDict(
+            {
+                "observation": torch.ones(100, 4),
+                "policy_version": torch.full((100,), 9.0),
+            },
+            batch_size=[100],
+        )
+        rb.extend(stale)
+        rb.extend(fresh)
+        sampler.consumer_version = 10
+
+        # Sample many times and count how often fresh vs stale entries appear
+        fresh_count = 0
+        total = 0
+        for _ in range(100):
+            batch = rb.sample()
+            # Fresh entries have observation == 1, stale have observation == 0
+            fresh_count += (batch["observation"][:, 0] > 0.5).sum().item()
+            total += batch.shape[0]
+
+        fresh_ratio = fresh_count / total
+        # Fresh entries (staleness=1) should be sampled ~10x more than stale (staleness=10)
+        # So fresh_ratio should be significantly above 0.5
+        assert (
+            fresh_ratio > 0.7
+        ), f"Expected fresh entries to dominate, got {fresh_ratio:.2f}"
+
+    def test_hard_staleness_gate(self):
+        """Test that entries beyond max_staleness are never sampled."""
+        from torchrl.data.replay_buffers.samplers import StalenessAwareSampler
+
+        sampler = StalenessAwareSampler(max_staleness=3)
+        rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(200),
+            sampler=sampler,
+            batch_size=32,
+        )
+        # Add entries at version 0 (stale) and version 8 (fresh)
+        stale = TensorDict(
+            {
+                "observation": torch.zeros(100, 4),
+                "policy_version": torch.full((100,), 0.0),
+            },
+            batch_size=[100],
+        )
+        fresh = TensorDict(
+            {
+                "observation": torch.ones(100, 4),
+                "policy_version": torch.full((100,), 8.0),
+            },
+            batch_size=[100],
+        )
+        rb.extend(stale)
+        rb.extend(fresh)
+        sampler.consumer_version = 10
+
+        # All sampled entries should be fresh (staleness=2 <= 3)
+        # Stale entries have staleness=10 > 3, so they're excluded
+        for _ in range(50):
+            batch = rb.sample()
+            assert (
+                batch["observation"][:, 0] > 0.5
+            ).all(), (
+                "Stale entries should never be sampled when max_staleness is exceeded"
+            )
+
+    def test_all_stale_raises(self):
+        """Test that an error is raised when all entries exceed max_staleness."""
+        from torchrl.data.replay_buffers.samplers import StalenessAwareSampler
+
+        sampler = StalenessAwareSampler(max_staleness=2)
+        rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(50),
+            sampler=sampler,
+            batch_size=8,
+        )
+        data = TensorDict(
+            {
+                "observation": torch.randn(50, 4),
+                "policy_version": torch.full((50,), 0.0),
+            },
+            batch_size=[50],
+        )
+        rb.extend(data)
+        sampler.consumer_version = 100  # Everything is very stale
+
+        with pytest.raises(RuntimeError, match="max_staleness"):
+            rb.sample()
+
+    def test_consumer_version_increment(self):
+        """Test consumer version tracking."""
+        from torchrl.data.replay_buffers.samplers import StalenessAwareSampler
+
+        sampler = StalenessAwareSampler()
+        assert sampler.consumer_version == 0
+        sampler.increment_consumer_version()
+        assert sampler.consumer_version == 1
+        sampler.consumer_version = 42
+        assert sampler.consumer_version == 42
+
+    def test_staleness_in_info(self):
+        """Test that staleness values are returned in sample info."""
+        from torchrl.data.replay_buffers.samplers import StalenessAwareSampler
+
+        sampler = StalenessAwareSampler(max_staleness=-1)
+        rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(50),
+            sampler=sampler,
+            batch_size=8,
+        )
+        data = TensorDict(
+            {
+                "observation": torch.randn(50, 4),
+                "policy_version": torch.full((50,), 3.0),
+            },
+            batch_size=[50],
+        )
+        rb.extend(data)
+        sampler.consumer_version = 5
+
+        index, info = sampler.sample(rb._storage, 8)
+        assert "staleness" in info
+        assert (info["staleness"] == 2.0).all()  # consumer=5 - version=3 = 2
+
+    def test_missing_version_key_raises(self):
+        """Test that a clear error is raised when version key is missing."""
+        from torchrl.data.replay_buffers.samplers import StalenessAwareSampler
+
+        sampler = StalenessAwareSampler()
+        rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(50),
+            sampler=sampler,
+            batch_size=8,
+        )
+        data = TensorDict(
+            {"observation": torch.randn(50, 4)},
+            batch_size=[50],
+        )
+        rb.extend(data)
+
+        with pytest.raises(KeyError, match="policy_version"):
+            rb.sample()
+
+    def test_state_dict_roundtrip(self):
+        """Test that state_dict/load_state_dict preserves sampler state."""
+        from torchrl.data.replay_buffers.samplers import StalenessAwareSampler
+
+        sampler = StalenessAwareSampler(max_staleness=7)
+        sampler.consumer_version = 42
+
+        sd = sampler.state_dict()
+        assert sd["consumer_version"] == 42
+        assert sd["max_staleness"] == 7
+
+        sampler2 = StalenessAwareSampler()
+        sampler2.load_state_dict(sd)
+        assert sampler2.consumer_version == 42
+        assert sampler2.max_staleness == 7
+
+    def test_no_staleness_limit(self):
+        """Test sampling with max_staleness=-1 (no limit)."""
+        from torchrl.data.replay_buffers.samplers import StalenessAwareSampler
+
+        sampler = StalenessAwareSampler(max_staleness=-1)
+        rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(50),
+            sampler=sampler,
+            batch_size=8,
+        )
+        data = TensorDict(
+            {
+                "observation": torch.randn(50, 4),
+                "policy_version": torch.full((50,), 0.0),
+            },
+            batch_size=[50],
+        )
+        rb.extend(data)
+        sampler.consumer_version = 1000  # Very stale, but no limit
+
+        # Should not raise
+        batch = rb.sample()
+        assert batch.shape[0] == 8
+
+
 def test_prioritized_slice_sampler_doc_example():
     sampler = PrioritizedSliceSampler(max_capacity=9, num_slices=3, alpha=0.7, beta=0.9)
     rb = TensorDictReplayBuffer(
@@ -4381,6 +4909,63 @@ class TestSharedStorageInit:
         expected = {0.0, 1.0, 2.0, 3.0}
         assert expected.issubset(values)
         assert len(storage) >= 8
+
+    def prioritized_collector_worker(self, rb, worker_id, queue):
+        data = TensorDict(
+            {
+                "obs": torch.full((4, 1), worker_id, dtype=torch.float32),
+                "td_error": torch.linspace(0.1, 1.0, 4) + worker_id,
+            },
+            batch_size=(4,),
+        )
+        rb.extend(data)
+        queue.put("done")
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+    def test_prioritized_memmap_cuda_sampler_after_multiprocess_writes(self, tmpdir):
+        ext = pytest.importorskip("torchrl._torchrl")
+        if not hasattr(ext, "CudaSumSegmentTreeFp32"):
+            pytest.skip("TorchRL was not built with CUDA segment tree support")
+
+        storage = LazyMemmapStorage(max_size=32, scratch_dir=tmpdir, shared_init=True)
+        writer_rb = TensorDictReplayBuffer(storage=storage, batch_size=4).share(True)
+        queue = mp.Queue()
+
+        processes = []
+        for i in range(2):
+            p = mp.Process(
+                target=self.prioritized_collector_worker,
+                args=(writer_rb, i, queue),
+            )
+            processes.append(p)
+            p.start()
+
+        for p in processes:
+            p.join()
+            assert p.exitcode == 0
+            assert queue.get(timeout=5) == "done"
+
+        assert len(storage) == 8
+        learner_rb = TensorDictPrioritizedReplayBuffer(
+            alpha=0.7,
+            beta=0.5,
+            storage=storage,
+            sampler_device="cuda:0",
+            batch_size=4,
+            priority_key="td_error",
+        )
+
+        sample = learner_rb.sample()
+        assert learner_rb._sampler.device == torch.device("cuda:0")
+        assert sample["obs"].device.type == "cpu"
+        assert sample["index"].device.type == "cpu"
+        assert sample["priority_weight"].device.type == "cpu"
+
+        sample["td_error"] = torch.ones_like(sample["td_error"]) * 10
+        learner_rb.update_tensordict_priority(sample)
+        sample = learner_rb.sample()
+        assert sample["index"].device.type == "cpu"
 
 
 @pytest.mark.skipif(not _has_zstandard, reason="zstandard required for this test.")

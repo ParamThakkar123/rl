@@ -30,6 +30,7 @@ jobs:
 
   benchmark:
     name: ${{ matrix.device }} Pytest benchmark
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'benchmarks/upload') }}
     runs-on: linux.g5.4xlarge.nvidia.gpu
     strategy:
       matrix:
@@ -92,6 +93,8 @@ jobs:
           python3.10 -m pip install git+https://github.com/pytorch/tensordict 
           python3.10 -m pip install safetensors tqdm pandas numpy matplotlib ray
           python3.10 setup.py develop
+
+          bash .github/unittest/helpers/assert_torch_version.sh nightly
 
           # test import
           python -c """import torch
